@@ -1,0 +1,68 @@
+[project]
+name = "packastack"
+version = "0.1.0"
+description = "Git repository management CLI for OpenStack packaging"
+authors = [{ name = "Your Name", email = "your@email.com" }]
+license = "GPL-3.0-only"
+dependencies = [
+    "gitpython>=3.1.0",
+    "click>=8.0.0",
+    "launchpadlib>=1.11.0",
+    "pyyaml>=6.0.0",
+    "requests>=2.31.0",
+    "tenacity>=8.2.0",
+    "rich>=13.0.0",
+]
+requires-python = ">=3.12"
+
+[project.scripts]
+packastack = "packastack.cli:cli"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "covdefaults>=2.3.0",
+]
+
+[build-system]
+requires = ["setuptools==80.9.0", "setuptools_scm[toml]>=7.1"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+write_to = "packastack/_version.py"
+version_scheme = "post-release"
+
+[tool.setuptools.package-dir]
+packastack = "packastack"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--cov=packastack --cov-report=term-missing --cov-report=html --cov-fail-under=100"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.uv]
+package = true
+
+[tool.coverage.run]
+source = ["packastack"]
+omit = ["tests/*"]
+plugins = ["covdefaults"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
