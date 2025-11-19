@@ -26,7 +26,10 @@ from packastack.cmds.import_tarballs import (
 )
 
 
-def test_import_cmd_creates_timestamped_log(tmp_path, monkeypatch):
+@patch("packastack.cmds.import_tarballs.get_launchpad_repositories", return_value=[])
+@patch("packastack.cmds.import_tarballs.process_repositories", return_value=None)
+@patch("packastack.cmds.import_tarballs.get_current_cycle", return_value="gazpacho")
+def test_import_cmd_creates_timestamped_log(mock_get_current_cycle, mock_process_repositories, mock_get_launchpad_repos, tmp_path):
     """Ensure the import command creates a timestamped error log under root/logs."""
     from click.testing import CliRunner
     from packastack.cli import cli
@@ -38,26 +41,17 @@ def test_import_cmd_creates_timestamped_log(tmp_path, monkeypatch):
         _logging.getLogger().info("fake repos fetched for test")
         return []
 
-    monkeypatch.setattr(import_tarballs, "get_launchpad_repositories", fake_get_launchpad_repos)
-    monkeypatch.setattr(
-        import_tarballs, "process_repositories", lambda *args, **kwargs: None
-    )
-    monkeypatch.setattr(
-        import_tarballs, "setup_directories", lambda root: (
-            tmp_path / "packaging",
-            tmp_path / "upstream",
-            tmp_path / "tarballs",
-            tmp_path / "logs",
-        )
-    )
-    monkeypatch.setattr(import_tarballs, "setup_releases_repo", lambda lock, upstream_dir: tmp_path / "releases")
-    monkeypatch.setattr(import_tarballs, "get_current_cycle", lambda path: "gazpacho")
+    # Decorators patch get_launchpad_repositories, process_repositories and get_current_cycle
+    from unittest.mock import patch as _patch
+    with _patch("packastack.cmds.import_tarballs.setup_directories", return_value=(tmp_path / "packaging", tmp_path / "upstream", tmp_path / "tarballs", tmp_path / "logs")):
+        with _patch("packastack.cmds.import_tarballs.setup_releases_repo", return_value=tmp_path / "releases"):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["--root", str(tmp_path), "import"]) 
+            if result.exit_code != 0:
+                print(result.output)
+            assert result.exit_code == 0
 
-    runner = CliRunner()
-    result = runner.invoke(cli, ["--root", str(tmp_path), "import"]) 
-    if result.exit_code != 0:
-        print(result.output)
-    assert result.exit_code == 0
+    # Note: assert and logging checks moved inside context manager above
 
     logs_dir = tmp_path / "logs"
     assert logs_dir.exists()
@@ -73,24 +67,22 @@ def test_import_cmd_creates_timestamped_log(tmp_path, monkeypatch):
     assert len(cli_files) >= 1
 
 
-def test_import_cmd_setup_cli_logging_fails(tmp_path, monkeypatch):
+@patch("packastack.logging_setup._setup_cli_logging", side_effect=Exception("nope"))
+@patch("packastack.cmds.import_tarballs.get_launchpad_repositories", return_value=[])
+@patch("packastack.cmds.import_tarballs.process_repositories", return_value=None)
+def test_import_cmd_setup_cli_logging_fails(mock_process_repo, mock_get_repos, mock_setup_logging, tmp_path):
     """If `_setup_cli_logging` raises, import_cmd should continue gracefully."""
     from click.testing import CliRunner
     from packastack.cmds import import_tarballs
 
     # Make the logging setup raise an exception
-    monkeypatch.setattr(
-        "packastack.logging_setup._setup_cli_logging",
-        lambda root: (_ for _ in ()).throw(Exception("nope")),
-    )
-
-    # Patch heavy operations
-    monkeypatch.setattr(
-        import_tarballs, "get_launchpad_repositories", lambda: []
-    )
-    monkeypatch.setattr(
-        import_tarballs, "process_repositories", lambda *args, **kwargs: None
-    )
+    from unittest.mock import patch as _patch
+    with _patch("packastack.cmds.import_tarballs.setup_releases_repo", return_value=tmp_path / "releases"):
+        with _patch("packastack.cmds.import_tarballs.get_current_cycle", return_value="gazpacho"):
+            from packastack.cli import cli as packastack_cli
+            runner = CliRunner()
+            result = runner.invoke(packastack_cli, ["--root", str(tmp_path), "import"]) 
+            assert result.exit_code == 0
 
     from packastack.cli import cli as packastack_cli
     runner = CliRunner()
@@ -415,11 +407,12 @@ def test_setup_directories(mock_path_class):
     assert logs == mock_logs_dir
 
 
-def test_setup_directories_default_root(tmp_path, monkeypatch):
+@patch("packastack.cmds.import_tarballs.Path.cwd")
+def test_setup_directories_default_root(mock_cwd, tmp_path):
     """Test directory creation with default root (cwd)."""
     from packastack.cmds.import_tarballs import setup_directories
 
-    monkeypatch.chdir(tmp_path)
+    mock_cwd.return_value = tmp_path
     packaging, upstream, tarballs, logs = setup_directories()
 
     # Verify all directories were created under cwd

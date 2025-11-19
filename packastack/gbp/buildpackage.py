@@ -8,13 +8,13 @@
 
 """Git-buildpackage (gbp) command wrapper."""
 
+import logging
 import re
 import subprocess
 from pathlib import Path
-import logging
 
-from packastack.git.repo import RepoManager
 from packastack.exceptions import DebianError
+from packastack.git.repo import RepoManager
 
 
 class GitBuildPackage:
@@ -38,7 +38,7 @@ class GitBuildPackage:
     def import_orig(
         self,
         tarball_path: str | Path,
-        merge_mode: str = "replace",
+        merge_mode: str = "merge",
         interactive: bool = False,
     ) -> None:
         """
@@ -46,7 +46,7 @@ class GitBuildPackage:
 
         Args:
             tarball_path: Path to tarball to import (str or Path)
-            merge_mode: Merge mode (default: 'replace')
+            merge_mode: Merge mode (default: 'merge')
             interactive: Run interactively (default: False)
 
         Raises:
