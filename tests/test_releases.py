@@ -8,8 +8,9 @@
 
 """Tests for packastack.importer.openstack module."""
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 import yaml
 
 from packastack.exceptions import ImporterError
@@ -303,7 +304,6 @@ Cryptographic Signatures
 
 def test_get_signing_key_file_read_error(temp_releases_repo):
     """Test error when key file can't be read."""
-    from pathlib import Path
 
     index_content = """
 Cryptographic Signatures
@@ -337,7 +337,7 @@ Cryptographic Signatures
     with patch("packastack.importer.openstack.Path.read_text", new=mock_read_text):
         with pytest.raises(ImporterError, match="Failed to read signing key file"):
             get_signing_key(str(temp_releases_repo))
-    
+
 
 
 def test_get_deliverable_info_parse_error(temp_releases_repo):

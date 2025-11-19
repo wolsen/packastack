@@ -8,8 +8,9 @@
 
 """Tests for packastack.importer.openstack module."""
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 import yaml
 
 from packastack.exceptions import ImporterError
@@ -435,7 +436,6 @@ def test_get_signing_key_index_not_found(temp_releases_repo):
 @patch("packastack.importer.openstack.Path.read_text", side_effect=OSError("Permission denied"))
 def test_get_signing_key_index_read_error(mock_read_text, temp_releases_repo):
     """Test error when index.rst can't be read."""
-    from pathlib import Path
 
     index_file = temp_releases_repo / "doc" / "source" / "index.rst"
     index_file.write_text("content")
@@ -464,7 +464,6 @@ Cryptographic Signatures
 
 def test_get_signing_key_file_read_error(temp_releases_repo):
     """Test error when key file can't be read."""
-    from pathlib import Path
 
     index_content = """
 Cryptographic Signatures

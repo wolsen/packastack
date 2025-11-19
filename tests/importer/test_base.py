@@ -8,8 +8,9 @@
 
 """Tests for base importer."""
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from packastack.exceptions import ImporterError
 from packastack.importer.base import BaseImporter
@@ -200,7 +201,6 @@ def test_import_tarball(importer_paths):
 @patch("packastack.importer.base.Path.write_text", side_effect=OSError("Permission denied"))
 def test_save_gpg_key_error(mock_write_text, importer_paths):
     """Test saving GPG key with error."""
-    from pathlib import Path
 
     packaging, upstream, tarballs, releases = importer_paths
 
@@ -224,7 +224,6 @@ def test_save_gpg_key_error(mock_write_text, importer_paths):
 @patch("packastack.importer.base.Path.rename", side_effect=OSError("Permission denied"))
 def test_rename_tarball_error(mock_rename, importer_paths):
     """Test renaming tarball with error."""
-    from pathlib import Path
 
     packaging, upstream, tarballs, releases = importer_paths
     tarballs.mkdir(exist_ok=True)

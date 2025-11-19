@@ -10,6 +10,7 @@
 
 import subprocess
 import sys
+
 import click
 
 
@@ -41,7 +42,6 @@ from unittest.mock import patch
 @patch("packastack.cli._setup_cli_logging", side_effect=Exception("boom"))
 def test_cli_logging_setup_failure(mock_setup, tmp_path):
     """Ensure CLI doesn't crash when _setup_cli_logging raises an exception."""
-    from click.testing import CliRunner
     from packastack.cli import cli
     # _setup_cli_logging patched via decorator to raise an exception
 
