@@ -182,7 +182,10 @@ def determine_importer_type(
         head_tags = repo_mgr.get_head_tags()
 
         if not head_tags:
-            logger.info("No tags at HEAD for %s; using snapshot importer", upstream_repo_path)
+            logger.info(
+                "No tags at HEAD for %s; using snapshot importer",
+                upstream_repo_path,
+            )
             # No tags at HEAD, use snapshot
             return SNAPSHOT, False
 
@@ -190,7 +193,11 @@ def determine_importer_type(
         for tag in head_tags:
             version_type = VersionConverter.detect_version_type(tag)
             if version_type in IMPORT_TYPES:
-                logger.info("Auto-detected import type %s for tag %s", version_type, tag)
+                logger.info(
+                    "Auto-detected import type %s for tag %s",
+                    version_type,
+                    tag,
+                )
                 return version_type, False
 
         # Tag exists but type unknown, default to snapshot
@@ -335,7 +342,12 @@ def update_gbp_and_ci_files(
 
     if commit_msg:
         pkg_mgr.commit("\n".join(commit_msg), files)
-        logger.info("Committed files %s in %s with message: %s", files, pkg_mgr.path, commit_msg)
+        logger.info(
+            "Committed files %s in %s with message: %s",
+            files,
+            pkg_mgr.path,
+            commit_msg,
+        )
 
 
 def create_upstream_branch(
@@ -452,7 +464,11 @@ def create_and_import_tarball(
 
     # Import tarball
     debian_version = importer.import_tarball()
-    logger.info("Imported tarball for %s produced debian_version %s", source_name, debian_version)
+    logger.info(
+        "Imported tarball for %s produced debian_version %s",
+        source_name,
+        debian_version,
+    )
 
     # Get upstream version and tarball
     upstream_version = importer.get_version()
@@ -873,7 +889,10 @@ def import_cmd(
         root_logger = logging.getLogger()
         # Remove any previous error handlers (not CLI packastack handlers)
         for h in list(root_logger.handlers):
-            if isinstance(h, logging.FileHandler) and getattr(h, "packastack_error", False):
+            if (
+                isinstance(h, logging.FileHandler)
+                and getattr(h, "packastack_error", False)
+            ):
                 root_logger.removeHandler(h)
 
         fh = logging.FileHandler(error_log_path, encoding="utf-8")

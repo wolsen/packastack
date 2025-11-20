@@ -348,7 +348,10 @@ class RepoManager:
 
         # Store original branch
         original_branch = self.get_current_branch()
-        self._logger.debug("Checkout important branches; original branch %s", original_branch)
+        self._logger.debug(
+            "Checkout important branches; original branch %s",
+            original_branch,
+        )
 
         # Try to checkout pristine-tar
         try:

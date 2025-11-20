@@ -10,6 +10,7 @@
 
 import subprocess
 import sys
+from unittest.mock import patch
 
 import click
 
@@ -36,10 +37,10 @@ def test_cli_import():
     assert callable(cli)
 
 
-from unittest.mock import patch
-
-
-@patch("packastack.cli._setup_cli_logging", side_effect=Exception("boom"))
+@patch(
+    "packastack.cli._setup_cli_logging",
+    side_effect=Exception("boom"),
+)
 def test_cli_logging_setup_failure(mock_setup, tmp_path):
     """Ensure CLI doesn't crash when _setup_cli_logging raises an exception."""
     from packastack.cli import cli

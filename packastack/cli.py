@@ -39,7 +39,8 @@ def cli(ctx, root: Path | None):
 
 # Setup a default logging handler for CLI commands so we capture logs
 # even before subcommands configure per-run logging.
-# NOTE: CLI logging setup is implemented in `packastack.logging_setup._setup_cli_logging`.
+# NOTE: CLI logging set up is implemented in
+# `packastack.logging_setup._setup_cli_logging`.
 
 
 # NOTE: Do not initialize CLI logging at import time; we configure logging

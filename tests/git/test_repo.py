@@ -795,7 +795,10 @@ def test_fetch_remote_not_found():
 def test_commit_not_opened():
     """Test commit without opened repository."""
     mgr = RepoManager(path="/tmp/test")
-    with pytest.raises(RepositoryError, match="Repository not opened"):
+    with pytest.raises(
+        RepositoryError,
+        match="Repository not opened",
+    ):
         mgr.commit("msg", ["file1"])
 
 
@@ -809,7 +812,10 @@ def test_commit_missing_user_config(mock_repo):
     mgr = RepoManager(path="/tmp/test")
     mgr.repo = mock_repo
 
-    with pytest.raises(RepositoryError, match="Git user.name and user.email must be set"):
+    with pytest.raises(
+        RepositoryError,
+        match="Git user.name and user.email must be set",
+    ):
         mgr.commit("msg", ["file1"])
 
 

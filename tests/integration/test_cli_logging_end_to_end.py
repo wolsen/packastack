@@ -37,21 +37,45 @@ def test_cli_end_to_end(mock_get_repos, tmp_path):
     _sub.run(["git", "init"], cwd=str(releases), check=True)
     (releases / "README").write_text("initial")
     _sub.run(["git", "add", "README"], cwd=str(releases), check=True)
-    _sub.run(["git", "-c", "commit.gpgsign=false", "-c", "user.name=Test User", "-c", "user.email=test@example.com", "commit", "-m", "init"], cwd=str(releases), check=True)
+    _sub.run(
+        [
+            "git",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=Test User",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "init",
+        ],
+        cwd=str(releases),
+        check=True,
+    )
     # Ensure a 'master' branch exists and is checked out for tests expecting it
     _sub.run(["git", "branch", "master"], cwd=str(releases), check=True)
     # Create a bare mirror of the releases repo and push to it so fetch/pull works
     bare_releases = upstream / "releases.git"
     bare_releases.mkdir()
     _sub.run(["git", "init", "--bare"], cwd=str(bare_releases), check=True)
-    _sub.run(["git", "remote", "add", "origin", f"file://{bare_releases}"], cwd=str(releases), check=True)
+    _sub.run(
+        ["git", "remote", "add", "origin", f"file://{bare_releases}"],
+        cwd=str(releases),
+        check=True,
+    )
     _sub.run(["git", "push", "origin", "master"], cwd=str(releases), check=True)
 
-    # Patch setup_releases_repo so CLI doesn't try to fetch/pull from remotes
+    # Patch setup_releases_repo so CLI doesn't try to
+    # fetch/pull from remotes
     from unittest.mock import patch as _patch
-    with _patch("packastack.cmds.import_tarballs.setup_releases_repo", return_value=releases):
+    with _patch(
+        "packastack.cmds.import_tarballs.setup_releases_repo",
+        return_value=releases,
+    ):
         runner = CliRunner()
-        result = runner.invoke(cli, ["--root", str(root), "import"])
+        args = ["--root", str(root), "import"]
+        result = runner.invoke(cli, args)
     assert result.exit_code == 0
 
     # Basic assertions that logs directory exists and CLI log file is present
