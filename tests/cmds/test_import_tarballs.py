@@ -30,6 +30,9 @@ from packastack.cmds.import_tarballs import (
 @patch("packastack.cmds.import_tarballs.process_repositories", return_value=None)
 @patch("packastack.cmds.import_tarballs.get_current_cycle", return_value="gazpacho")
 def test_import_cmd_creates_timestamped_log(
+    mock_get_current_cycle,
+    mock_process_repositories,
+    mock_get_launchpad_repos,
     tmp_path,
 ):
     """Ensure the import command creates a timestamped error log under root/logs."""
@@ -801,7 +804,8 @@ def test_update_gbp_and_ci_files_commit_ci_only(
     tmp_path,
 ):
     """Test update_gbp_and_ci_files triggers commit when
-    .launchpad.yaml changed only."""
+    .launchpad.yaml changed only.
+    """
     from packastack.cmds.import_tarballs import update_gbp_and_ci_files
 
     mock_mgr = MagicMock()
