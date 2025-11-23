@@ -12,7 +12,9 @@ import errno
 import fnmatch
 import logging
 import threading
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -26,8 +28,6 @@ from packastack.constants import (
     UPSTREAM_BRANCH_PREFIX,
     UPSTREAM_GIT_REPOS,
 )
-from packastack.package.control import ControlFileParser
-from packastack.package.version import VersionConverter
 from packastack.exceptions import (
     DebianError,
     ImporterError,
@@ -49,6 +49,8 @@ from packastack.launchpad import (
     RepositoryManager,
     lpci,
 )
+from packastack.package.control import ControlFileParser
+from packastack.package.version import VersionConverter
 
 # Import type constants
 RELEASE = "release"
@@ -67,28 +69,48 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
+@dataclass(frozen=True)
+class RepositorySpec:
+    """Lightweight representation of a Launchpad repository entry."""
+
+    name: str
+    url: str
+
+
 class ImportContext:
     """Shared context for import operations."""
 
-    def __init__(self, cycle: str, import_type: str):
+    def __init__(self, cycle: str, import_type: str, cleanup_tarballs: bool = False):
         """Initialize import context."""
         self.cycle = cycle
         self.import_type = import_type
+        self.cleanup_tarballs = cleanup_tarballs
         self.releases_lock = threading.Lock()
         self.tarballs_lock = threading.Lock()
-        self.successes = []
-        self.failures = []
+        self.successes: list[str] = []
+        self.failures: list[tuple[str, str]] = []
         self.lock = threading.Lock()
 
-    def add_success(self, repo_name: str):
+    def add_success(self, repo_name: str) -> None:
         """Add successful import."""
         with self.lock:
             self.successes.append(repo_name)
 
-    def add_failure(self, repo_name: str, error: str):
+    def add_failure(self, repo_name: str, error: str) -> None:
         """Add failed import."""
         with self.lock:
             self.failures.append((repo_name, error))
+
+
+def cleanup_tarballs(tarball_path: Path) -> None:
+    """Remove a downloaded tarball and its signature if they exist."""
+    signature = tarball_path.with_suffix(tarball_path.suffix + ".asc")
+    for path in (tarball_path, signature):
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            # Cleanup should not block the workflow
+            pass
 
 
 def setup_directories(root: Path | None = None) -> tuple[Path, Path, Path, Path]:
@@ -138,16 +160,13 @@ def setup_releases_repo(releases_lock: threading.Lock, upstream_dir: Path) -> Pa
         repo_mgr = RepoManager(path=releases_path, url=RELEASES_REPO_URL)
 
         if releases_path.exists():
-            # Update existing repo
             repo_mgr.fetch()
             repo_mgr.checkout("master")
             repo_mgr.pull()
         else:
-            # Clone new repo
             logger.info(
                 "Cloning releases repo %s to %s", RELEASES_REPO_URL, releases_path
             )
-            repo_mgr = RepoManager(url=RELEASES_REPO_URL)
             repo_mgr.clone()
 
         return releases_path
@@ -253,7 +272,7 @@ def parse_packaging_metadata(pkg_repo: RepoManager) -> tuple[str, str, str]:
             f" on branch {pkg_repo.get_current_branch()}"
         )
 
-    parser = ControlFileParser(str(control_path))
+    parser = ControlFileParser(control_path)
     source_name = parser.get_source_name()
     homepage = parser.get_homepage()
 
@@ -400,9 +419,7 @@ def check_deliverable_exists(
     Raises:
         ImporterError: If deliverable check fails
     """
-    deliverable = get_deliverable_info(
-        str(releases_path), cycle, upstream_project_name
-    )
+    deliverable = get_deliverable_info(releases_path, cycle, upstream_project_name)
     if not deliverable and import_type in [RELEASE, CANDIDATE, BETA]:
         console.print(
             f"[yellow]Warning: No deliverable found for {repo_name}, "
@@ -449,11 +466,11 @@ def create_and_import_tarball(
     }[importer_type]
 
     importer = importer_cls(
-        str(pkg_repo_path),
-        str(upstream_repo_path),
-        str(tarballs_dir),
+        pkg_repo_path,
+        upstream_repo_path,
+        tarballs_dir,
         cycle,
-        str(releases_path),
+        releases_path,
         explicit_snapshot=explicit_snapshot,
     )
 
@@ -493,9 +510,21 @@ def get_launchpad_repositories() -> list:
     return repo_mgr.list_team_repositories()
 
 
+def to_repository_specs(repositories: Iterable) -> list[RepositorySpec]:
+    """Normalize Launchpad repository objects to RepositorySpec instances."""
+    specs: list[RepositorySpec] = []
+    for repo in repositories:
+        name = getattr(repo, "name", None)
+        url = getattr(repo, "url", None) or getattr(repo, "git_https_url", None)
+        if not name or not url:
+            raise ImporterError("Repository entry missing required attributes")
+        specs.append(RepositorySpec(name=name, url=url))
+    return specs
+
+
 def filter_repositories(
-    repositories: list, patterns: list[str], exclude: bool = False
-) -> list:
+    repositories: Iterable[RepositorySpec], patterns: list[str], exclude: bool = False
+) -> list[RepositorySpec]:
     """
     Filter the list of repository objects by name using patterns and glob support.
 
@@ -533,7 +562,7 @@ def filter_repositories(
 
 
 def process_repositories(
-    repositories: list,
+    repositories: Iterable[RepositorySpec],
     context: ImportContext,
     packaging_dir: Path,
     upstream_dir: Path,
@@ -558,11 +587,12 @@ def process_repositories(
     Raises:
         PackastackError: If processing fails and continue_on_error is False
     """
+    repo_specs = list(repositories)
     if jobs == 1:
-        # Sequential processing
-        for repo in repositories:
+        for spec in repo_specs:
             process_repository(
-                repo,
+                spec.name,
+                spec.url,
                 context,
                 packaging_dir,
                 upstream_dir,
@@ -570,33 +600,32 @@ def process_repositories(
                 releases_path,
                 continue_on_error,
             )
-    else:
-        # Parallel processing
-        with ThreadPoolExecutor(max_workers=jobs) as executor:
+        return
 
-            futures = {
-                executor.submit(
-                    process_repository,
-                    repo,
-                    context,
-                    packaging_dir,
-                    upstream_dir,
-                    tarballs_dir,
-                    releases_path,
-                    continue_on_error,
-                ): repo
-                for repo in repositories
-            }
+    with ThreadPoolExecutor(max_workers=jobs) as executor:
+        futures = {
+            executor.submit(
+                process_repository,
+                spec.name,
+                spec.url,
+                context,
+                packaging_dir,
+                upstream_dir,
+                tarballs_dir,
+                releases_path,
+                continue_on_error,
+            ): spec
+            for spec in repo_specs
+        }
 
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception:
-                    if not continue_on_error:
-                        # Cancel remaining tasks
-                        for f in futures:
-                            f.cancel()
-                        raise
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception:
+                if not continue_on_error:
+                    for pending in futures:
+                        pending.cancel()
+                    raise
 
 
 def print_import_summary(
@@ -630,7 +659,8 @@ def print_import_summary(
 
 
 def process_repository(
-    repo: RepoManager,
+    repo_name: str,
+    repo_url: str,
     context: ImportContext,
     packaging_dir: Path,
     upstream_dir: Path,
@@ -653,10 +683,10 @@ def process_repository(
     Returns:
         True if successful, False otherwise
     """
-    console.print(f"Processing repository: {repo.name}")
+    console.print(f"Processing repository: {repo_name}")
     try:
         # 1. Clone/update packaging repo
-        pkg_mgr = setup_repository(repo.name, repo.url, packaging_dir)
+        pkg_mgr = setup_repository(repo_name, repo_url, packaging_dir)
 
         # 2. Track remote branches
         pkg_mgr.track_remote_branches()
@@ -687,7 +717,7 @@ def process_repository(
             context.cycle,
             upstream_project_name,
             context.import_type,
-            repo.name,
+            repo_name,
         ):
             return False
 
@@ -712,16 +742,19 @@ def process_repository(
         gbp = GitBuildPackage(pkg_mgr.path)
         gbp.import_orig(renamed_tarball)
 
-        context.add_success(repo.name)
-        console.print(f"[green]✓[/green] {repo.name}: {debian_version}")
+        if context.cleanup_tarballs:
+            cleanup_tarballs(renamed_tarball)
+
+        context.add_success(repo_name)
+        console.print(f"[green]✓[/green] {repo_name}: {debian_version}")
         return True
 
     except SystemExit as e:
         if e.code == errno.EBADMSG:
             # EBADMSG - explicitly requested snapshot but HEAD is tagged
             error_msg = "Explicitly requested snapshot but HEAD is tagged"
-            context.add_failure(repo.name, error_msg)
-            console.print(f"[red]✗[/red] {repo.name}: {error_msg}")
+            context.add_failure(repo_name, error_msg)
+            console.print(f"[red]✗[/red] {repo_name}: {error_msg}")
             if not continue_on_error:
                 raise
             return False
@@ -729,16 +762,16 @@ def process_repository(
 
     except PackastackError as e:
         error_msg = str(e)
-        context.add_failure(repo.name, error_msg)
-        console.print(f"[red]✗[/red] {repo.name}: {error_msg}")
+        context.add_failure(repo_name, error_msg)
+        console.print(f"[red]✗[/red] {repo_name}: {error_msg}")
         if not continue_on_error:
             raise
         return False
 
     except Exception as e:
         error_msg = f"Unexpected error: {e}"
-        context.add_failure(repo.name, error_msg)
-        console.print(f"[red]✗[/red] {repo.name}: {error_msg}")
+        context.add_failure(repo_name, error_msg)
+        console.print(f"[red]✗[/red] {repo_name}: {error_msg}")
         if not continue_on_error:
             raise
         return False
@@ -802,7 +835,8 @@ def import_cmd(
 
     try:
         # Root path is provided as global CLI option and stored in context
-        root = ctx.obj.get("root")
+        root_value = ctx.obj.get("root")
+        root = Path(root_value) if root_value else None
         # Setup directories
         packaging_dir, upstream_dir, tarballs_dir, logs_dir = setup_directories(root)
         console.print("Created working directories")
@@ -827,7 +861,7 @@ def import_cmd(
         # Get list of repositories from Launchpad
         console.print("Fetching repository list from Launchpad...")
         logging.getLogger(__name__).info("Fetching launchpad repositories")
-        repositories = get_launchpad_repositories()
+        repositories = to_repository_specs(get_launchpad_repositories())
         console.print(f"Found [cyan]{len(repositories)}[/cyan] repositories")
 
         # Apply package filtering if packages were specified

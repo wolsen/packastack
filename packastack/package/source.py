@@ -12,7 +12,6 @@ from pathlib import Path
 from packastack.exceptions import DebianError
 from packastack.package.uscan import Uscan
 
-
 DEBIAN_DIR = "debian"
 
 
@@ -71,7 +70,7 @@ class DebianSourcePackage:
         Returns:
             list[Path]: The path to the install files.
         """
-        return self.debian_dir.glob(f"{self.debian_dir}/*.install")
+        return list(self.debian_dir.glob("*.install"))
 
     @property
     def watch_file(self) -> Path:

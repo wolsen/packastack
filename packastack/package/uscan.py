@@ -27,10 +27,10 @@ become necessary.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from functools import cmp_to_key
 from pathlib import Path
-from typing import Iterable
 from urllib.parse import urljoin
 
 import requests
@@ -150,8 +150,7 @@ class Uscan:
                 continue
 
             buffer += line
-            if buffer:
-                entries.append(buffer.strip())
+            entries.append(buffer.strip())
             buffer = ""
 
         parsed_entries = [self._parse_watch_entry(entry) for entry in entries if entry]
@@ -227,9 +226,9 @@ class Uscan:
             version = self._apply_mangles(version, entry.uversionmangle)
 
             matched_url = match.group(0)
-            download_url = self._apply_mangles(matched_url, entry.downloadurlmangle)
-            if not download_url.startswith(("http://", "https://")):
-                download_url = urljoin(entry.url, download_url)
+            download_url = urljoin(
+                entry.url, self._apply_mangles(matched_url, entry.downloadurlmangle)
+            )
 
             filename = self._apply_mangles(matched_url, entry.filenamemangle)
             if not filename:

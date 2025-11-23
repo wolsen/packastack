@@ -17,12 +17,16 @@ import pytest
 
 from packastack.cmds.import_tarballs import (
     ImportContext,
+    RepositorySpec,
+    cleanup_tarballs,
+    create_and_import_tarball,
     determine_importer_type,
     filter_repositories,
     get_launchpad_repositories,
     print_import_summary,
     process_repositories,
     process_repository,
+    to_repository_specs,
 )
 
 
@@ -115,11 +119,6 @@ def test_import_cmd_setup_cli_logging_fails(
                 packastack_cli, ["--root", str(tmp_path), "import"]
             )
             assert result.exit_code == 0
-
-    from packastack.cli import cli as packastack_cli
-    runner = CliRunner()
-    result = runner.invoke(packastack_cli, ["--root", str(tmp_path), "import"])
-    assert result.exit_code == 0
 
 
 
@@ -323,11 +322,10 @@ def test_setup_releases_repo_clone(mock_repo_mgr, mock_path, tmp_path):
     lock = threading.Lock()
     result = setup_releases_repo(lock, mock_upstream)
 
-    # Should have been called with url to clone
-    mock_repo_mgr.assert_called_with(url=mock_repo_mgr.call_args_list[0].kwargs["url"])
-    mock_mgr.clone.assert_called_once()
-    # RepoManager should have been created (called once) to perform clone
+    # Should have been called with path+url to clone
     mock_repo_mgr.assert_called_once()
+    assert mock_repo_mgr.call_args.kwargs["url"] == "https://opendev.org/openstack/releases"
+    mock_mgr.clone.assert_called_once()
     assert result == mock_releases_path
 
 
@@ -506,8 +504,9 @@ def test_setup_repository_existing(mock_repo_mgr, tmp_path):
         "test-repo", "https://example.com/repo", tmp_path
     )
     assert result_mgr == mock_mgr
-    # No path returned anymore, so infer path from mock
-    mock_repo_mgr.assert_called_once_with(path=repo_path)
+    mock_repo_mgr.assert_called_once_with(
+        path=repo_path, url="https://example.com/repo"
+    )
     mock_mgr.fetch.assert_called_once()
     mock_mgr.clone.assert_not_called()
 
@@ -526,7 +525,9 @@ def test_setup_repository_new(mock_repo_mgr, tmp_path):
     )
 
     assert result_mgr == mock_mgr
-    mock_repo_mgr.assert_called_once_with(url="https://example.com/repo")
+    mock_repo_mgr.assert_called_once_with(
+        path=tmp_path / "test-repo", url="https://example.com/repo"
+    )
     mock_mgr.clone.assert_called_once()
     mock_mgr.fetch.assert_not_called()
 
@@ -946,8 +947,6 @@ def test_check_deliverable_exists_not_found_snapshot(
 
 def test_create_and_import_tarball_release(tmp_path):
     """Test create_and_import_tarball with release importer."""
-    from packastack.cmds.import_tarballs import create_and_import_tarball
-
     pkg_repo_path = tmp_path / "nova"
     upstream_repo_path = tmp_path / "upstream"
     tarballs_dir = tmp_path / "tarballs"
@@ -985,8 +984,6 @@ def test_create_and_import_tarball_release(tmp_path):
 
 def test_cleanup_tarballs_success(tmp_path):
     """Test cleanup_tarballs removes files."""
-    from packastack.cmds.import_tarballs import cleanup_tarballs
-
     tarball = tmp_path / "nova_27.0.0.orig.tar.gz"
     signature = tmp_path / "nova_27.0.0.orig.tar.gz.asc"
     tarball.write_text("fake tarball")
@@ -1000,8 +997,6 @@ def test_cleanup_tarballs_success(tmp_path):
 
 def test_cleanup_tarballs_no_signature(tmp_path):
     """Test cleanup_tarballs without signature file."""
-    from packastack.cmds.import_tarballs import cleanup_tarballs
-
     tarball = tmp_path / "nova_27.0.0.orig.tar.gz"
     tarball.write_text("fake tarball")
 
@@ -1012,11 +1007,23 @@ def test_cleanup_tarballs_no_signature(tmp_path):
 
 def test_cleanup_tarballs_error(tmp_path):
     """Test cleanup_tarballs handles errors silently."""
-    from packastack.cmds.import_tarballs import cleanup_tarballs
-
     tarball = tmp_path / "nonexistent.tar.gz"
 
     # Should not raise exception
+    cleanup_tarballs(tarball)
+
+
+def test_cleanup_tarballs_error_branch(monkeypatch, tmp_path):
+    """Exceptions from unlink should be swallowed."""
+    tarball = tmp_path / "nova_1.orig.tar.gz"
+    tarball.write_text("content")
+
+    def boom(self, missing_ok=False):
+        raise PermissionError("nope")
+
+    monkeypatch.setattr(Path, "unlink", boom)
+
+    # Should not raise even though unlink fails
     cleanup_tarballs(tarball)
 
 
@@ -1356,6 +1363,19 @@ def test_get_launchpad_repositories(mock_lp_client_cls, mock_repo_mgr_cls):
     mock_repo_mgr.list_team_repositories.assert_called_once()
 
 
+def test_to_repository_specs_missing_attributes():
+    """Repositories must supply both name and URL fields."""
+    from packastack.exceptions import ImporterError
+
+    repo = Mock()
+    repo.name = "nova"
+    repo.url = None
+    repo.git_https_url = None
+    # Missing url/git_https_url should raise
+    with pytest.raises(ImporterError, match="missing required"):
+        to_repository_specs([repo])
+
+
 @patch("packastack.cmds.import_tarballs.process_repository")
 def test_process_repositories_sequential(mock_process_repo):
     """Test sequential repository processing."""
@@ -1640,7 +1660,10 @@ def test_import_cmd_current_cycle_sequential(
     from packastack.cli import cli as packastack_cli
     runner = CliRunner()
     # Test include packages via positional argument (only 'nova' should be processed)
-    mock_get_repos.return_value = [Mock(name="nova"), Mock(name="neutron")]
+    mock_get_repos.return_value = [
+        RepositorySpec(name="nova", url="https://example.com/nova.git"),
+        RepositorySpec(name="neutron", url="https://example.com/neutron.git"),
+    ]
     args = [
         "import",
         "--type",
@@ -1687,7 +1710,10 @@ def test_import_cmd_specific_cycle_parallel(
 
     from packastack.cli import cli as packastack_cli
     runner = CliRunner()
-    mock_get_repos.return_value = [Mock(name="nova"), Mock(name="neutron")]
+    mock_get_repos.return_value = [
+        RepositorySpec(name="nova", url="https://example.com/nova.git"),
+        RepositorySpec(name="neutron", url="https://example.com/neutron.git"),
+    ]
     # Test exclude packages via flag
     runner.invoke(
         packastack_cli,
