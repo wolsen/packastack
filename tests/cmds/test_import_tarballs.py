@@ -18,7 +18,6 @@ import pytest
 from packastack.cmds.import_tarballs import (
     ImportContext,
     RepositorySpec,
-    cleanup_tarballs,
     create_and_import_tarball,
     determine_importer_type,
     filter_repositories,
@@ -124,11 +123,10 @@ def test_import_cmd_setup_cli_logging_fails(
 
 def test_import_context_initialization(tmp_path):
     """Test ImportContext initialization."""
-    ctx = ImportContext(cycle="dalmatian", import_type="release", cleanup_tarballs=True)
+    ctx = ImportContext(cycle="dalmatian", import_type="release")
 
     assert ctx.cycle == "dalmatian"
     assert ctx.import_type == "release"
-    assert ctx.cleanup_tarballs is True
     assert hasattr(ctx.releases_lock, "acquire")  # Check it's a lock-like object
     assert hasattr(ctx.tarballs_lock, "acquire")
     assert isinstance(ctx.successes, list)
@@ -138,7 +136,7 @@ def test_import_context_initialization(tmp_path):
 
 def test_import_context_add_success():
     """Test adding successful import."""
-    ctx = ImportContext(cycle="dalmatian", import_type="release", cleanup_tarballs=True)
+    ctx = ImportContext(cycle="dalmatian", import_type="release")
 
     ctx.add_success("nova")
     ctx.add_success("neutron")
@@ -150,7 +148,7 @@ def test_import_context_add_success():
 
 def test_import_context_add_failure():
     """Test adding failed import."""
-    ctx = ImportContext(cycle="dalmatian", import_type="release", cleanup_tarballs=True)
+    ctx = ImportContext(cycle="dalmatian", import_type="release")
 
     ctx.add_failure("nova", "Version not found")
     ctx.add_failure("neutron", "Network error")
@@ -982,55 +980,6 @@ def test_create_and_import_tarball_release(tmp_path):
         assert tarball == tarballs_dir / "nova_27.0.0-1ubuntu0.orig.tar.gz"
 
 
-def test_cleanup_tarballs_success(tmp_path):
-    """Test cleanup_tarballs removes files."""
-    tarball = tmp_path / "nova_27.0.0.orig.tar.gz"
-    signature = tmp_path / "nova_27.0.0.orig.tar.gz.asc"
-    tarball.write_text("fake tarball")
-    signature.write_text("fake signature")
-
-    cleanup_tarballs(tarball)
-
-    assert not tarball.exists()
-    assert not signature.exists()
-
-
-def test_cleanup_tarballs_no_signature(tmp_path):
-    """Test cleanup_tarballs without signature file."""
-    tarball = tmp_path / "nova_27.0.0.orig.tar.gz"
-    tarball.write_text("fake tarball")
-
-    cleanup_tarballs(tarball)
-
-    assert not tarball.exists()
-
-
-def test_cleanup_tarballs_error(tmp_path):
-    """Test cleanup_tarballs handles errors silently."""
-    tarball = tmp_path / "nonexistent.tar.gz"
-
-    # Should not raise exception
-    cleanup_tarballs(tarball)
-
-
-def test_cleanup_tarballs_error_branch(monkeypatch, tmp_path):
-    """Exceptions from unlink should be swallowed."""
-    tarball = tmp_path / "nova_1.orig.tar.gz"
-    tarball.write_text("content")
-
-    def boom(self, missing_ok=False):
-        raise PermissionError("nope")
-
-    monkeypatch.setattr(Path, "unlink", boom)
-
-    # Should not raise even though unlink fails
-    cleanup_tarballs(tarball)
-
-
-# Tests for process_repository
-
-
-@patch("packastack.cmds.import_tarballs.cleanup_tarballs")
 @patch("packastack.cmds.import_tarballs.GitBuildPackage")
 @patch("packastack.cmds.import_tarballs.create_and_import_tarball")
 @patch("packastack.cmds.import_tarballs.determine_importer_type")
@@ -1052,33 +1001,24 @@ def test_process_repository_success(
     mock_determine_type,
     mock_create_import,
     mock_gbp,
-    mock_cleanup,
     tmp_path,
 ):
     """Test process_repository successful flow."""
-    # Multi-import handled at module level
-
-    # Setup mocks
     mock_pkg_mgr = MagicMock()
     mock_setup_repo.return_value = mock_pkg_mgr
-
     mock_parse_metadata.return_value = (
         "nova",
         "https://opendev.org/openstack/nova",
         "nova",
     )
-
     mock_upstream_mgr = MagicMock()
     mock_setup_upstream.return_value = mock_upstream_mgr
-
     mock_check_deliverable.return_value = True
     mock_determine_type.return_value = ("release", False)
     mock_create_import.return_value = ("27.0.0-1ubuntu0", tmp_path / "nova.tar.gz")
+    mock_gbp.return_value = MagicMock()
 
-    mock_gbp_instance = MagicMock()
-    mock_gbp.return_value = mock_gbp_instance
-
-    context = ImportContext("dalmatian", "auto", False)
+    context = ImportContext("dalmatian", "auto")
 
     result = process_repository(
         "nova",
@@ -1095,69 +1035,7 @@ def test_process_repository_success(
     assert "nova" in context.successes
     mock_pkg_mgr.track_remote_branches.assert_called_once()
     mock_pkg_mgr.checkout_important_branches.assert_called_once()
-    mock_gbp_instance.import_orig.assert_called_once()
-    mock_cleanup.assert_not_called()
-
-
-@patch("packastack.cmds.import_tarballs.cleanup_tarballs")
-@patch("packastack.cmds.import_tarballs.GitBuildPackage")
-@patch("packastack.cmds.import_tarballs.create_and_import_tarball")
-@patch("packastack.cmds.import_tarballs.determine_importer_type")
-@patch("packastack.cmds.import_tarballs.check_deliverable_exists")
-@patch("packastack.cmds.import_tarballs.create_upstream_branch")
-@patch("packastack.cmds.import_tarballs.update_gbp_and_ci_files")
-@patch("packastack.cmds.import_tarballs.setup_upstream_repository")
-@patch("packastack.cmds.import_tarballs.parse_packaging_metadata")
-@patch("packastack.cmds.import_tarballs.setup_repository")
-@patch("packastack.cmds.import_tarballs.console")
-def test_process_repository_with_cleanup(
-    mock_console,
-    mock_setup_repo,
-    mock_parse_metadata,
-    mock_setup_upstream,
-    mock_update_gbp,
-    mock_create_branch,
-    mock_check_deliverable,
-    mock_determine_type,
-    mock_create_import,
-    mock_gbp,
-    mock_cleanup,
-    tmp_path,
-):
-    """Test process_repository with tarball cleanup."""
-    # Multi-import handled at module level
-
-    # Setup mocks
-    mock_pkg_mgr = MagicMock()
-    mock_setup_repo.return_value = mock_pkg_mgr
-    mock_parse_metadata.return_value = (
-        "nova",
-        "https://opendev.org/openstack/nova",
-        "nova",
-    )
-    mock_upstream_mgr = MagicMock()
-    mock_setup_upstream.return_value = mock_upstream_mgr
-    mock_check_deliverable.return_value = True
-    mock_determine_type.return_value = ("release", False)
-    tarball_path = tmp_path / "nova.tar.gz"
-    mock_create_import.return_value = ("27.0.0-1ubuntu0", tarball_path)
-    mock_gbp.return_value = MagicMock()
-
-    context = ImportContext("dalmatian", "auto", True)  # cleanup_tarballs=True
-
-    result = process_repository(
-        "nova",
-        "https://git.launchpad.net/~ubuntu-openstack-dev/ubuntu/+source/nova",
-        context,
-        tmp_path / "packaging",
-        tmp_path / "upstream",
-        tmp_path / "tarballs",
-        tmp_path / "releases",
-        False,
-    )
-
-    assert result is True
-    mock_cleanup.assert_called_once_with(tarball_path)
+    mock_gbp.return_value.import_orig.assert_called_once()
 
 
 @patch("packastack.cmds.import_tarballs.check_deliverable_exists")
@@ -1191,7 +1069,7 @@ def test_process_repository_no_deliverable(
     mock_setup_upstream.return_value = mock_upstream_mgr
     mock_check_deliverable.return_value = False
 
-    context = ImportContext("dalmatian", "release", False)
+    context = ImportContext("dalmatian", "release")
 
     result = process_repository(
         "nova",
@@ -1218,7 +1096,7 @@ def test_process_repository_packastack_error(mock_console, mock_setup_repo, tmp_
 
     mock_setup_repo.side_effect = DebianError("Test error")
 
-    context = ImportContext("dalmatian", "release", False)
+    context = ImportContext("dalmatian", "release")
 
     result = process_repository(
         "nova",
@@ -1249,7 +1127,7 @@ def test_process_repository_packastack_error_no_continue(
 
     mock_setup_repo.side_effect = DebianError("Test error")
 
-    context = ImportContext("dalmatian", "release", False)
+    context = ImportContext("dalmatian", "release")
 
     with pytest.raises(DebianError):
         process_repository(
@@ -1272,7 +1150,7 @@ def test_process_repository_unexpected_error(mock_console, mock_setup_repo, tmp_
 
     mock_setup_repo.side_effect = RuntimeError("Unexpected error")
 
-    context = ImportContext("dalmatian", "release", False)
+    context = ImportContext("dalmatian", "release")
 
     result = process_repository(
         "nova",
@@ -1300,7 +1178,7 @@ def test_process_repository_system_exit_ebadmsg(
 
     mock_setup_repo.side_effect = SystemExit(74)
 
-    context = ImportContext("dalmatian", "snapshot", False)
+    context = ImportContext("dalmatian", "snapshot")
 
     result = process_repository(
         "nova",
@@ -1328,7 +1206,7 @@ def test_process_repository_system_exit_other(mock_console, mock_setup_repo, tmp
 
     mock_setup_repo.side_effect = SystemExit(1)
 
-    context = ImportContext("dalmatian", "release", False)
+    context = ImportContext("dalmatian", "release")
 
     with pytest.raises(SystemExit):
         process_repository(

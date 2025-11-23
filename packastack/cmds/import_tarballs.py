@@ -80,11 +80,10 @@ class RepositorySpec:
 class ImportContext:
     """Shared context for import operations."""
 
-    def __init__(self, cycle: str, import_type: str, cleanup_tarballs: bool = False):
+    def __init__(self, cycle: str, import_type: str):
         """Initialize import context."""
         self.cycle = cycle
         self.import_type = import_type
-        self.cleanup_tarballs = cleanup_tarballs
         self.releases_lock = threading.Lock()
         self.tarballs_lock = threading.Lock()
         self.successes: list[str] = []
@@ -100,17 +99,6 @@ class ImportContext:
         """Add failed import."""
         with self.lock:
             self.failures.append((repo_name, error))
-
-
-def cleanup_tarballs(tarball_path: Path) -> None:
-    """Remove a downloaded tarball and its signature if they exist."""
-    signature = tarball_path.with_suffix(tarball_path.suffix + ".asc")
-    for path in (tarball_path, signature):
-        try:
-            path.unlink(missing_ok=True)
-        except Exception:
-            # Cleanup should not block the workflow
-            pass
 
 
 def setup_directories(root: Path | None = None) -> tuple[Path, Path, Path, Path]:
@@ -741,9 +729,6 @@ def process_repository(
         # 14. Run gbp import-orig
         gbp = GitBuildPackage(pkg_mgr.path)
         gbp.import_orig(renamed_tarball)
-
-        if context.cleanup_tarballs:
-            cleanup_tarballs(renamed_tarball)
 
         context.add_success(repo_name)
         console.print(f"[green]✓[/green] {repo_name}: {debian_version}")
