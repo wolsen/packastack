@@ -8,6 +8,7 @@
 
 """Import command for importing upstream tarballs."""
 
+import errno
 import fnmatch
 import logging
 import threading
@@ -69,11 +70,10 @@ console = Console()
 class ImportContext:
     """Shared context for import operations."""
 
-    def __init__(self, cycle: str, import_type: str, cleanup_tarballs: bool):
+    def __init__(self, cycle: str, import_type: str):
         """Initialize import context."""
         self.cycle = cycle
         self.import_type = import_type
-        self.cleanup_tarballs = cleanup_tarballs
         self.releases_lock = threading.Lock()
         self.tarballs_lock = threading.Lock()
         self.successes = []
@@ -135,10 +135,10 @@ def setup_releases_repo(releases_lock: threading.Lock, upstream_dir: Path) -> Pa
     """
     with releases_lock:
         releases_path = upstream_dir / RELEASES_DIR
+        repo_mgr = RepoManager(path=releases_path, url=RELEASES_REPO_URL)
 
         if releases_path.exists():
             # Update existing repo
-            repo_mgr = RepoManager(path=releases_path)
             repo_mgr.fetch()
             repo_mgr.checkout("master")
             repo_mgr.pull()
@@ -148,8 +148,6 @@ def setup_releases_repo(releases_lock: threading.Lock, upstream_dir: Path) -> Pa
                 "Cloning releases repo %s to %s", RELEASES_REPO_URL, releases_path
             )
             repo_mgr = RepoManager(url=RELEASES_REPO_URL)
-            # Set the clone destination path on the manager for operations
-            repo_mgr.path = releases_path
             repo_mgr.clone()
 
         return releases_path
@@ -226,13 +224,10 @@ def setup_repository(
         RepositoryError: If clone/update fails
     """
     repo_path = base_dir / repo_name
+    repo_mgr = RepoManager(path=repo_path, url=repo_url)
     if repo_path.exists():
-        repo_mgr = RepoManager(path=repo_path)
         repo_mgr.fetch()
     else:
-        repo_mgr = RepoManager(url=repo_url)
-        # Ensure we set the local clone destination before cloning
-        repo_mgr.path = repo_path
         repo_mgr.clone()
 
     return repo_mgr
@@ -482,26 +477,6 @@ def create_and_import_tarball(
     return debian_version, renamed_tarball
 
 
-def cleanup_tarballs(tarball_path: Path) -> None:
-    """
-    Remove tarball and signature file.
-
-    Args:
-        tarball_path: Path to tarball to remove
-
-    Note:
-        Failures are silently ignored as cleanup is non-fatal
-    """
-    try:
-        tarball_path.unlink()
-        # Also remove signature if exists
-        sig_path = tarball_path.with_suffix(tarball_path.suffix + ".asc")
-        if sig_path.exists():
-            sig_path.unlink()
-    except Exception:
-        pass  # Non-fatal
-
-
 def get_launchpad_repositories() -> list:
     """
     Fetch list of repositories from Launchpad.
@@ -587,8 +562,7 @@ def process_repositories(
         # Sequential processing
         for repo in repositories:
             process_repository(
-                repo.name,
-                repo.url,
+                repo,
                 context,
                 packaging_dir,
                 upstream_dir,
@@ -603,8 +577,7 @@ def process_repositories(
             futures = {
                 executor.submit(
                     process_repository,
-                    repo.name,
-                    repo.url,
+                    repo,
                     context,
                     packaging_dir,
                     upstream_dir,
@@ -657,8 +630,7 @@ def print_import_summary(
 
 
 def process_repository(
-    repo_name: str,
-    repo_url: str,
+    repo: RepoManager,
     context: ImportContext,
     packaging_dir: Path,
     upstream_dir: Path,
@@ -670,8 +642,7 @@ def process_repository(
     Process a single repository.
 
     Args:
-        repo_name: Repository name
-        repo_url: Repository URL
+        repo: the repository to process
         context: Shared import context
         packaging_dir: Path to packaging directory
         upstream_dir: Path to upstream directory
@@ -682,10 +653,10 @@ def process_repository(
     Returns:
         True if successful, False otherwise
     """
-    console.print(f"Processing repository: {repo_name}")
+    console.print(f"Processing repository: {repo.name}")
     try:
         # 1. Clone/update packaging repo
-        pkg_mgr = setup_repository(repo_name, repo_url, packaging_dir)
+        pkg_mgr = setup_repository(repo.name, repo.url, packaging_dir)
 
         # 2. Track remote branches
         pkg_mgr.track_remote_branches()
@@ -716,7 +687,7 @@ def process_repository(
             context.cycle,
             upstream_project_name,
             context.import_type,
-            repo_name,
+            repo.name,
         ):
             return False
 
@@ -741,20 +712,16 @@ def process_repository(
         gbp = GitBuildPackage(pkg_mgr.path)
         gbp.import_orig(renamed_tarball)
 
-        # 15. Cleanup tarball if requested
-        if context.cleanup_tarballs:
-            cleanup_tarballs(renamed_tarball)
-
-        context.add_success(repo_name)
-        console.print(f"[green]✓[/green] {repo_name}: {debian_version}")
+        context.add_success(repo.name)
+        console.print(f"[green]✓[/green] {repo.name}: {debian_version}")
         return True
 
     except SystemExit as e:
-        if e.code == 74:
+        if e.code == errno.EBADMSG:
             # EBADMSG - explicitly requested snapshot but HEAD is tagged
             error_msg = "Explicitly requested snapshot but HEAD is tagged"
-            context.add_failure(repo_name, error_msg)
-            console.print(f"[red]✗[/red] {repo_name}: {error_msg}")
+            context.add_failure(repo.name, error_msg)
+            console.print(f"[red]✗[/red] {repo.name}: {error_msg}")
             if not continue_on_error:
                 raise
             return False
@@ -762,16 +729,16 @@ def process_repository(
 
     except PackastackError as e:
         error_msg = str(e)
-        context.add_failure(repo_name, error_msg)
-        console.print(f"[red]✗[/red] {repo_name}: {error_msg}")
+        context.add_failure(repo.name, error_msg)
+        console.print(f"[red]✗[/red] {repo.name}: {error_msg}")
         if not continue_on_error:
             raise
         return False
 
     except Exception as e:
         error_msg = f"Unexpected error: {e}"
-        context.add_failure(repo_name, error_msg)
-        console.print(f"[red]✗[/red] {repo_name}: {error_msg}")
+        context.add_failure(repo.name, error_msg)
+        console.print(f"[red]✗[/red] {repo.name}: {error_msg}")
         if not continue_on_error:
             raise
         return False
@@ -817,11 +784,6 @@ def process_repository(
     default=False,
     help="Continue processing other repos if one fails",
 )
-@click.option(
-    "--cleanup-tarballs/--no-cleanup-tarballs",
-    default=False,
-    help="Remove tarballs after successful import",
-)
 def import_cmd(
     ctx,
     packages: tuple[str, ...],
@@ -830,7 +792,6 @@ def import_cmd(
     cycle: str,
     jobs: int,
     continue_on_error: bool,
-    cleanup_tarballs: bool,
 ):
     """Import upstream tarballs into packaging repositories."""
     # CLI-level logging is configured by the parent `cli` group which sets
@@ -861,7 +822,7 @@ def import_cmd(
             console.print(f"Using cycle: [cyan]{actual_cycle}[/cyan]")
 
         # Create import context
-        context = ImportContext(actual_cycle, import_type, cleanup_tarballs)
+        context = ImportContext(actual_cycle, import_type)
 
         # Get list of repositories from Launchpad
         console.print("Fetching repository list from Launchpad...")
