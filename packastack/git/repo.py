@@ -29,7 +29,7 @@ from packastack.exceptions import RepositoryError
 class RepoManager:
     """Manages Git repository operations with retry logic for network operations."""
 
-    def __init__(self, path: str | Path | None = None, url: str | None = None):
+    def __init__(self, path: str | Path, url: str | None = None):
         """
         Initialize repository manager.
 
@@ -40,10 +40,10 @@ class RepoManager:
         Raises:
             ValueError: If neither path nor url is provided
         """
-        if not path and not url:
-            raise ValueError("Either path or url must be provided")
+        if not path:
+            raise ValueError("Path must be provided")
 
-        self.path = Path(path) if path else None
+        self.path = Path(path)
         self.url = url
         self.repo: Repo | None = None
         self._logger = logging.getLogger(__name__)

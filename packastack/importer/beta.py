@@ -8,7 +8,7 @@
 
 """Beta tarball importer."""
 
-from packastack.debian.version import VersionConverter
+from packastack.package.version import VersionConverter
 from packastack.importer.release import ReleaseImporter
 
 

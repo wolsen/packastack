@@ -10,7 +10,7 @@
 
 import pytest
 
-from packastack.debian.version import VersionConverter
+from packastack.package.version import VersionConverter
 from packastack.exceptions import DebianError
 
 

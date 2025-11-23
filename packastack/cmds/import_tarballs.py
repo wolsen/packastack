@@ -26,8 +26,8 @@ from packastack.constants import (
     UPSTREAM_BRANCH_PREFIX,
     UPSTREAM_GIT_REPOS,
 )
-from packastack.debian.control import ControlFileParser
-from packastack.debian.version import VersionConverter
+from packastack.package.control import ControlFileParser
+from packastack.package.version import VersionConverter
 from packastack.exceptions import (
     DebianError,
     ImporterError,

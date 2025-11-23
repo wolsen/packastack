@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from packastack.debian.control import ControlFileParser
+from packastack.package.control import ControlFileParser
 from packastack.exceptions import DebianError
 
 
