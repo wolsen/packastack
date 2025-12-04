@@ -1,9 +1,15 @@
 # Integration test demonstrating a minimal CLI run without network calls
+import io
 from unittest.mock import patch
 
-from click.testing import CliRunner
+from packastack.cli import PackastackApp
 
-from packastack.cli import cli
+
+def run_cli(args):
+    stdout = io.StringIO()
+    app = PackastackApp(stdout=stdout)
+    code = app.run(args)
+    return code, stdout.getvalue()
 
 
 @patch("packastack.cmds.import_tarballs.get_launchpad_repositories", return_value=[])
@@ -73,10 +79,8 @@ def test_cli_end_to_end(mock_get_repos, tmp_path):
         "packastack.cmds.import_tarballs.setup_releases_repo",
         return_value=releases,
     ):
-        runner = CliRunner()
-        args = ["--root", str(root), "import"]
-        result = runner.invoke(cli, args)
-    assert result.exit_code == 0
+        code, _ = run_cli(["--root", str(root), "import"])
+    assert code == 0
 
     # Basic assertions that logs directory exists and CLI log file is present
     cli_files = list(logs.glob("packastack-*.log"))
