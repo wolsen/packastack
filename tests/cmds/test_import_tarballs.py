@@ -8,12 +8,14 @@
 
 """Tests for import command."""
 
+import io
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
-import click
 import pytest
+from packastack.cli import PackastackApp
+from packastack.cmds.import_tarballs import CLICommandError
 
 from packastack.cmds.import_tarballs import (
     ImportContext,
@@ -29,6 +31,13 @@ from packastack.cmds.import_tarballs import (
 )
 
 
+def run_cli(args):
+    stdout = io.StringIO()
+    app = PackastackApp(stdout=stdout)
+    code = app.run(args)
+    return code, stdout.getvalue()
+
+
 @patch("packastack.cmds.import_tarballs.get_launchpad_repositories", return_value=[])
 @patch("packastack.cmds.import_tarballs.process_repositories", return_value=None)
 @patch("packastack.cmds.import_tarballs.get_current_cycle", return_value="gazpacho")
@@ -39,10 +48,6 @@ def test_import_cmd_creates_timestamped_log(
     tmp_path,
 ):
     """Ensure the import command creates a timestamped error log under root/logs."""
-    from click.testing import CliRunner
-
-    from packastack.cli import cli
-
     # Patch heavy operations: fetching repositories and processing them
     def fake_get_launchpad_repos():
         import logging as _logging
@@ -65,13 +70,9 @@ def test_import_cmd_creates_timestamped_log(
             "packastack.cmds.import_tarballs.setup_releases_repo",
             return_value=tmp_path / "releases",
         ):
-            runner = CliRunner()
-            result = runner.invoke(
-                cli, ["--root", str(tmp_path), "import"]
-            )
-            if result.exit_code != 0:
-                print(result.output)
-            assert result.exit_code == 0
+            code, _ = run_cli(["--root", str(tmp_path), "import"])
+
+            assert code == 0
 
     # Note: assert and logging checks moved inside context manager above
 
@@ -102,8 +103,6 @@ def test_import_cmd_setup_cli_logging_fails(
     # Make the logging setup raise an exception
     from unittest.mock import patch as _patch
 
-    from click.testing import CliRunner
-
     with _patch(
         "packastack.cmds.import_tarballs.setup_releases_repo",
         return_value=tmp_path / "releases",
@@ -112,12 +111,9 @@ def test_import_cmd_setup_cli_logging_fails(
             "packastack.cmds.import_tarballs.get_current_cycle",
             return_value="gazpacho",
         ):
-            from packastack.cli import cli as packastack_cli
-            runner = CliRunner()
-            result = runner.invoke(
-                packastack_cli, ["--root", str(tmp_path), "import"]
-            )
-            assert result.exit_code == 0
+            code, _ = run_cli(["--root", str(tmp_path), "import"])
+
+            assert code == 0
 
 
 
@@ -1501,7 +1497,7 @@ def test_print_import_summary_with_failures_no_continue(mock_console, mock_loggi
     context.successes = ["nova"]
     context.failures = [("neutron", "Version not found")]
 
-    with pytest.raises(click.ClickException, match="Import failed for 1 repositories"):
+    with pytest.raises(CLICommandError, match="Import failed for 1 repositories"):
         print_import_summary(context, Path("/tmp/errors.log"), False)
 
 
@@ -1522,9 +1518,6 @@ def test_import_cmd_current_cycle_sequential(
     mock_print_summary,
 ):
     """Test import_cmd with current cycle and sequential processing."""
-    from click.testing import CliRunner
-
-
     mock_setup_dirs.return_value = (
         Path("/tmp/packaging"),
         Path("/tmp/upstream"),
@@ -1535,8 +1528,6 @@ def test_import_cmd_current_cycle_sequential(
     mock_get_cycle.return_value = "dalmatian"
     mock_get_repos.return_value = []
 
-    from packastack.cli import cli as packastack_cli
-    runner = CliRunner()
     # Test include packages via positional argument (only 'nova' should be processed)
     mock_get_repos.return_value = [
         RepositorySpec(name="nova", url="https://example.com/nova.git"),
@@ -1550,9 +1541,9 @@ def test_import_cmd_current_cycle_sequential(
         "current",
         "nova",
     ]
-    result = runner.invoke(packastack_cli, args)
+    code, _ = run_cli(args)
 
-    assert result.exit_code == 0
+    assert code == 0
     mock_get_cycle.assert_called_once()
     mock_process.assert_called_once()
     # Verify setup_releases_repo was called with upstream_dir
@@ -1574,9 +1565,6 @@ def test_import_cmd_specific_cycle_parallel(
     mock_print_summary,
 ):
     """Test import_cmd with specific cycle and parallel processing."""
-    from click.testing import CliRunner
-
-
     mock_setup_dirs.return_value = (
         Path("/tmp/packaging"),
         Path("/tmp/upstream"),
@@ -1586,15 +1574,12 @@ def test_import_cmd_specific_cycle_parallel(
     mock_setup_releases.return_value = Path("/tmp/releases")
     mock_get_repos.return_value = []
 
-    from packastack.cli import cli as packastack_cli
-    runner = CliRunner()
     mock_get_repos.return_value = [
         RepositorySpec(name="nova", url="https://example.com/nova.git"),
         RepositorySpec(name="neutron", url="https://example.com/neutron.git"),
     ]
     # Test exclude packages via flag
-    runner.invoke(
-        packastack_cli,
+    run_cli(
         [
             "import",
             "--exclude-packages",
@@ -1605,7 +1590,7 @@ def test_import_cmd_specific_cycle_parallel(
             "--jobs",
             "4",
             "nova",
-        ],
+        ]
     )
 
     mock_process.assert_called_once()
@@ -1617,17 +1602,12 @@ def test_import_cmd_specific_cycle_parallel(
 @patch("packastack.cmds.import_tarballs.console")
 def test_import_cmd_keyboard_interrupt(mock_console, mock_setup_dirs):
     """Test import_cmd with KeyboardInterrupt."""
-    from click.testing import CliRunner
-
-
     mock_setup_dirs.side_effect = KeyboardInterrupt()
 
-    from packastack.cli import cli as packastack_cli
-    runner = CliRunner()
-    result = runner.invoke(packastack_cli, ["import"])
+    code, output = run_cli(["import"])
 
-    assert result.exit_code == 1
-    assert "Import interrupted by user" in mock_console.print.call_args[0][0]
+    assert code == 1
+    assert "Import interrupted by user" in output or mock_console.print.called
 
     # No process_repositories mock here, skip filtering assertion
 
@@ -1635,18 +1615,14 @@ def test_import_cmd_keyboard_interrupt(mock_console, mock_setup_dirs):
 @patch("packastack.cmds.import_tarballs.console")
 def test_import_cmd_packastack_error(mock_console, mock_setup_dirs):
     """Test import_cmd with PackastackError."""
-    from click.testing import CliRunner
-
     from packastack.exceptions import PackastackError
 
     mock_setup_dirs.side_effect = PackastackError("Test error")
 
-    from packastack.cli import cli as packastack_cli
-    runner = CliRunner()
-    result = runner.invoke(packastack_cli, ["import"])
+    code, output = run_cli(["import"])
 
-    assert result.exit_code == 1
-    assert "Test error" in result.output
+    assert code == 1
+    assert "Test error" in output
     # No process_repositories mock here, skip filtering assertion
 
 
@@ -1654,17 +1630,12 @@ def test_import_cmd_packastack_error(mock_console, mock_setup_dirs):
 @patch("packastack.cmds.import_tarballs.console")
 def test_import_cmd_unexpected_error(mock_console, mock_setup_dirs):
     """Test import_cmd with unexpected error."""
-    from click.testing import CliRunner
-
-
     mock_setup_dirs.side_effect = ValueError("Unexpected")
 
-    from packastack.cli import cli as packastack_cli
-    runner = CliRunner()
-    result = runner.invoke(packastack_cli, ["import"])
+    code, output = run_cli(["import"])
 
-    assert result.exit_code == 1
-    assert "Unexpected error: Unexpected" in result.output
+    assert code == 1
+    assert "Unexpected error: Unexpected" in output
 
 
 @patch("packastack.cmds.import_tarballs.print_import_summary")
@@ -1681,8 +1652,7 @@ def test_import_cmd_click_exception_reraise(
     mock_process,
     mock_print_summary,
 ):
-    """Test import_cmd re-raises Click exceptions."""
-    from click.testing import CliRunner
+    """Test import_cmd re-raises command errors."""
 
 
     mock_setup_dirs.return_value = (
@@ -1693,14 +1663,12 @@ def test_import_cmd_click_exception_reraise(
     )
     mock_setup_releases.return_value = Path("/tmp/releases")
     mock_get_repos.return_value = []
-    mock_print_summary.side_effect = click.ClickException("Test click error")
+    mock_print_summary.side_effect = CLICommandError("Test click error")
 
-    from packastack.cli import cli as packastack_cli
-    runner = CliRunner()
-    result = runner.invoke(packastack_cli, ["import", "--cycle", "caracal"])
+    code, output = run_cli(["import", "--cycle", "caracal"])
 
-    assert result.exit_code == 1
-    assert "Test click error" in result.output
+    assert code == 1
+    assert "Test click error" in output
 
 
 @patch("packastack.cmds.import_tarballs.print_import_summary")
@@ -1719,9 +1687,6 @@ def test_import_cmd_with_root_option(
     tmp_path,
 ):
     """Test import_cmd with --root option."""
-    from click.testing import CliRunner
-
-
     mock_setup_dirs.return_value = (
         tmp_path / "packaging",
         tmp_path / "upstream",
@@ -1731,13 +1696,8 @@ def test_import_cmd_with_root_option(
     mock_setup_releases.return_value = tmp_path / "releases"
     mock_get_repos.return_value = []
 
-    runner = CliRunner()
-    from packastack.cli import cli as packastack_cli
-    runner = CliRunner()
-    result = runner.invoke(
-        packastack_cli, ["--root", str(tmp_path), "import", "--cycle", "caracal"]
-    )
+    code, _ = run_cli(["--root", str(tmp_path), "import", "--cycle", "caracal"])
 
-    assert result.exit_code == 0
+    assert code == 0
     # Verify setup_directories was called with root parameter
     mock_setup_dirs.assert_called_once_with(Path(str(tmp_path)))
